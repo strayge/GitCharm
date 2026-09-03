@@ -436,7 +436,7 @@ export class GitLogPanelProvider implements vscode.WebviewViewProvider, vscode.D
     return all.filter(b => ids.has(b.repoId));
   }
 
-  private async pickBranchRepo(repoIds: string[], branchName: string, action: 'Pull' | 'Push'): Promise<string | null> {
+  private async pickBranchRepo(repoIds: string[], branchName: string, action: 'Pull' | 'Push' | 'Force Push'): Promise<string | null> {
     const metas = new Map(this.manager.getRepoMetas().map(meta => [meta.id, meta]));
     const candidates = Array.from(new Set(repoIds))
       .filter(repoId => !!this.manager.getRepo(repoId))
@@ -806,7 +806,8 @@ export class GitLogPanelProvider implements vscode.WebviewViewProvider, vscode.D
       }
 
       case 'LOG_PUSH_BRANCH_PICK': {
-        const repoId = await this.pickBranchRepo(msg.repoIds, msg.branchName, 'Push');
+        const action = msg.force ? 'Force Push' : 'Push';
+        const repoId = await this.pickBranchRepo(msg.repoIds, msg.branchName, action);
         if (!repoId) break;
         const repo = this.manager.getRepo(repoId);
         if (!repo) break;
@@ -817,6 +818,10 @@ export class GitLogPanelProvider implements vscode.WebviewViewProvider, vscode.D
         }
 
         const upstream = await repo.getBranchUpstream(msg.branchName);
+        if (msg.force && !upstream) {
+          vscode.window.showWarningMessage(`Cannot force push "${msg.branchName}" because it has no upstream. Push it normally first.`);
+          break;
+        }
         let remote = upstream?.remote;
         let remoteBranchName = upstream?.branchName ?? msg.branchName;
         if (!remote) {
@@ -835,13 +840,24 @@ export class GitLogPanelProvider implements vscode.WebviewViewProvider, vscode.D
           remoteBranchName = msg.branchName;
         }
 
+        if (msg.force) {
+          const repoName = this.manager.getRepoMetas().find(meta => meta.id === repoId)?.name ?? repoId;
+          const confirmed = await vscode.window.showWarningMessage(
+            `Force push "${msg.branchName}" from ${repoName} to "${remote}/${remoteBranchName}"? This can overwrite remote commits.`,
+            { modal: true },
+            'Force Push'
+          );
+          if (confirmed !== 'Force Push') break;
+        }
+
         await vscode.window.withProgress(
-          { location: vscode.ProgressLocation.Notification, title: `Pushing "${msg.branchName}" to ${remote}`, cancellable: false },
+          { location: vscode.ProgressLocation.Notification, title: `${msg.force ? 'Force pushing' : 'Pushing'} "${msg.branchName}" to ${remote}`, cancellable: false },
           async () => {
             try {
-              await repo.pushBranch(msg.branchName, remote!, remoteBranchName, !upstream);
-              logInfo('pushBranch', `Pushed "${msg.branchName}" to "${remote}/${remoteBranchName}" successfully.`);
-              vscode.window.showInformationMessage(`Pushed "${msg.branchName}" to "${remote}/${remoteBranchName}" successfully.`);
+              await repo.pushBranch(msg.branchName, remote!, remoteBranchName, !upstream, !!msg.force);
+              const verb = msg.force ? 'Force pushed' : 'Pushed';
+              logInfo('pushBranch', `${verb} "${msg.branchName}" to "${remote}/${remoteBranchName}" successfully.`);
+              vscode.window.showInformationMessage(`${verb} "${msg.branchName}" to "${remote}/${remoteBranchName}" successfully.`);
               this.post({ type: 'LOG_REFRESH' });
             } catch (e: unknown) {
               showGitError('pushBranch', e);

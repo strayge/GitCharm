@@ -345,6 +345,7 @@ function LogApp() {
           onFetchRepo={(repoId) => getVsCodeApi().postMessage({ type: 'LOG_FETCH_REPO', requestId: generateId(), repoId } satisfies LogToHostMsg)}
           onPull={(repoIds, branchName) => getVsCodeApi().postMessage({ type: 'LOG_PULL_BRANCH_PICK', repoIds, branchName } satisfies LogToHostMsg)}
           onPush={(repoIds, branchName) => getVsCodeApi().postMessage({ type: 'LOG_PUSH_BRANCH_PICK', repoIds, branchName } satisfies LogToHostMsg)}
+          onForcePush={(repoIds, branchName) => getVsCodeApi().postMessage({ type: 'LOG_PUSH_BRANCH_PICK', repoIds, branchName, force: true } satisfies LogToHostMsg)}
           onCheckoutTag={(repoIds, tagName) => repoIds.forEach(repoId => getVsCodeApi().postMessage({ type: 'LOG_CHECKOUT_TAG', requestId: generateId(), repoId, tagName } satisfies LogToHostMsg))}
           onMergeTag={(repoIds, tagName) => getVsCodeApi().postMessage({ type: 'LOG_MERGE_TAG_MULTI', requestId: generateId(), repoIds, tagName } satisfies LogToHostMsg)}
           onPushTag={(repoId, tagName) => getVsCodeApi().postMessage({ type: 'LOG_PUSH_TAG_PICK', repoId, tagName } satisfies LogToHostMsg)}

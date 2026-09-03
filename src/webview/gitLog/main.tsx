@@ -492,6 +492,9 @@ function App() {
           onPush={(repoIds, branchName) => {
             getVsCodeApi().postMessage({ type: 'LOG_PUSH_BRANCH_PICK', repoIds, branchName } satisfies LogToHostMsg);
           }}
+          onForcePush={(repoIds, branchName) => {
+            getVsCodeApi().postMessage({ type: 'LOG_PUSH_BRANCH_PICK', repoIds, branchName, force: true } satisfies LogToHostMsg);
+          }}
           onCheckoutTag={(repoIds, tagName) => {
             repoIds.forEach(repoId => {
               getVsCodeApi().postMessage({ type: 'LOG_CHECKOUT_TAG', requestId: generateId(), repoId, tagName } satisfies LogToHostMsg);

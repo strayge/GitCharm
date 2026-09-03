@@ -387,17 +387,21 @@ export class GitService {
   }
 
   async getBranches(): Promise<BranchInfo[]> {
-    const tipMetadata = new Map<string, { hash: string; date?: string }>();
+    const tipMetadata = new Map<string, { hash: string; date?: string; upstream?: string }>();
     try {
       const raw = await this.git.raw([
         'for-each-ref',
-        '--format=%(objectname)%00%(committerdate:iso-strict)%00%(refname:short)',
+        '--format=%(objectname)%00%(committerdate:iso-strict)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(refname)',
         'refs/heads/',
         'refs/remotes/',
       ]);
       for (const line of raw.trim().split('\n')) {
-        const [hash, date, name] = line.split('\0');
-        if (hash && name) tipMetadata.set(name, { hash, date: date || undefined });
+        const [hash, date, upstreamRemote, upstreamRef, name] = line.split('\0');
+        if (!hash || !name) continue;
+        const upstream = upstreamRemote && upstreamRef?.startsWith('refs/heads/')
+          ? `${upstreamRemote}/${upstreamRef.slice('refs/heads/'.length)}`
+          : undefined;
+        tipMetadata.set(name, { hash, date: date || undefined, upstream });
       }
     } catch { /* branch refs still come from the primary provider */ }
 
@@ -416,15 +420,17 @@ export class GitService {
       const headIsOnBranch = head?.type === RefType.Head;
       for (const ref of localRefs.filter(r => r.type === RefType.Head)) {
         const name = ref.name ?? '';
+        const fullName = `refs/heads/${name}`;
         const isHead = headIsOnBranch && name === head?.name;
         branches.push({
           repoId: this.repoId,
           name,
-          fullName: `refs/heads/${name}`,
+          fullName,
           isHead,
           isRemote: false,
-          lastCommitHash: ref.commit ?? tipMetadata.get(name)?.hash,
-          lastCommitDate: tipMetadata.get(name)?.date,
+          lastCommitHash: ref.commit ?? tipMetadata.get(fullName)?.hash,
+          lastCommitDate: tipMetadata.get(fullName)?.date,
+          upstream: tipMetadata.get(fullName)?.upstream,
           aheadBehind: (isHead && head!.ahead !== undefined && head!.behind !== undefined)
             ? { ahead: head!.ahead, behind: head!.behind }
             : undefined,
@@ -436,16 +442,17 @@ export class GitService {
         // Use ref.remote for the remote name — splitting ref.name on '/' breaks for branch
         // names that themselves contain slashes.
         const name = ref.name ?? '';
+        const fullName = `refs/remotes/${name}`;
         const remoteName = ref.remote ?? name.split('/')[0];
         branches.push({
           repoId: this.repoId,
           name,
-          fullName: `refs/remotes/${name}`,
+          fullName,
           isHead: false,
           isRemote: true,
           remoteName,
-          lastCommitHash: ref.commit ?? tipMetadata.get(name)?.hash,
-          lastCommitDate: tipMetadata.get(name)?.date,
+          lastCommitHash: ref.commit ?? tipMetadata.get(fullName)?.hash,
+          lastCommitDate: tipMetadata.get(fullName)?.date,
         });
       }
 
@@ -468,15 +475,17 @@ export class GitService {
       if (full) aheadBehind = { ahead: parseInt(full[1], 10), behind: parseInt(full[2], 10) };
       else if (aheadOnly) aheadBehind = { ahead: parseInt(aheadOnly[1], 10), behind: 0 };
       else if (behindOnly) aheadBehind = { ahead: 0, behind: parseInt(behindOnly[1], 10) };
+      const fullName = isRemote ? `refs/remotes/${cleanName}` : `refs/heads/${cleanName}`;
       branches.push({
         repoId: this.repoId,
         name: cleanName,
-        fullName: isRemote ? `refs/remotes/${cleanName}` : `refs/heads/${cleanName}`,
+        fullName,
         isHead: branch.current,
         isRemote,
         remoteName,
-        lastCommitHash: tipMetadata.get(cleanName)?.hash ?? branch.commit,
-        lastCommitDate: tipMetadata.get(cleanName)?.date,
+        lastCommitHash: tipMetadata.get(fullName)?.hash ?? branch.commit,
+        lastCommitDate: tipMetadata.get(fullName)?.date,
+        upstream: tipMetadata.get(fullName)?.upstream,
         aheadBehind,
       });
     }
@@ -1188,15 +1197,16 @@ export class GitService {
     return { remote, branchName: remoteRef.slice('refs/heads/'.length) };
   }
 
-  async pushBranch(branchName: string, remote: string, remoteBranchName: string, setUpstream: boolean): Promise<void> {
+  async pushBranch(branchName: string, remote: string, remoteBranchName: string, setUpstream: boolean, force = false): Promise<void> {
     const refspec = `refs/heads/${branchName}:refs/heads/${remoteBranchName}`;
     const vsRepo = this.vsRepo();
     if (vsRepo?.state.remotes.some(item => item.name === remote)) {
-      await vsRepo.push(remote, refspec, setUpstream);
+      await vsRepo.push(remote, refspec, setUpstream, force ? ForcePushMode.ForceWithLease : undefined);
       return;
     }
     const args = ['push'];
     if (setUpstream) args.push('--set-upstream');
+    if (force) args.push('--force-with-lease');
     args.push(remote, refspec);
     await this.git.raw(args);
   }

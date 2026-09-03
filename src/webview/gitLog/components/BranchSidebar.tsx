@@ -22,6 +22,7 @@ interface Props {
   onFetchRepo: (repoId: string) => void;
   onPull: (repoIds: string[], branchName: string) => void;
   onPush: (repoIds: string[], branchName: string) => void;
+  onForcePush: (repoIds: string[], branchName: string) => void;
   onCheckoutTag: (repoIds: string[], tagName: string) => void;
   onMergeTag: (repoIds: string[], tagName: string) => void;
   onPushTag: (repoId: string, tagName: string) => void;
@@ -94,11 +95,11 @@ function buildMergedTags(tags: TagInfo[]): MergedTag[] {
 
 export const BranchSidebar = forwardRef<HTMLDivElement, Props>(function BranchSidebar({
   repos, branches, tags, filter, selectedBranchFilter, activeRepoId, onFilterChange, onBranchFilterSelect, onBranchFocus,
-  onCheckout, onMerge, onRebase, onDelete, onFetchRepo, onPull, onPush,
+  onCheckout, onMerge, onRebase, onDelete, onFetchRepo, onPull, onPush, onForcePush,
   onCheckoutTag, onMergeTag, onPushTag, onDeleteTag, onCollapse, hidden,
 }, ref) {
   const [collapsed, setCollapsed] = useState<Set<SectionKey>>(new Set());
-  const [contextMenu, setContextMenu] = useState<{ merged: MergedBranch; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ merged: MergedBranch; x: number; y: number; altKey: boolean } | null>(null);
   const [tagContextMenu, setTagContextMenu] = useState<{ mergedTag: MergedTag; x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -207,7 +208,7 @@ export const BranchSidebar = forwardRef<HTMLDivElement, Props>(function BranchSi
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            setContextMenu({ merged: m, x: e.clientX, y: e.clientY });
+            setContextMenu({ merged: m, x: e.clientX, y: e.clientY, altKey: e.altKey });
           }}
           onClick={() => {
             const instance = focusInstance(m);
@@ -239,7 +240,7 @@ export const BranchSidebar = forwardRef<HTMLDivElement, Props>(function BranchSi
                 onContextMenu={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setContextMenu({ merged: m, x: e.clientX, y: e.clientY });
+                  setContextMenu({ merged: m, x: e.clientX, y: e.clientY, altKey: e.altKey });
                 }}
                 onClick={() => {
                   const instance = focusInstance(m);
@@ -287,11 +288,13 @@ export const BranchSidebar = forwardRef<HTMLDivElement, Props>(function BranchSi
         const localInstances = contextMenu.merged.instances.filter(instance => !instance.isRemote);
         const currentLocalRepoIds = localInstances.filter(instance => instance.isHead).map(instance => instance.repoId);
         const localRepoIds = localInstances.map(instance => instance.repoId);
+        const forcePushRepoIds = localInstances.filter(instance => !!instance.upstream).map(instance => instance.repoId);
         return (
           <ContextMenu
             merged={contextMenu.merged}
             x={contextMenu.x}
             y={contextMenu.y}
+            initialAltKey={contextMenu.altKey}
             canDelete={!contextMenu.merged.isHead}
             onClose={() => setContextMenu(null)}
             onCheckout={() => { onCheckout(contextMenu.merged.repoIds, inst.name); setContextMenu(null); }}
@@ -300,6 +303,7 @@ export const BranchSidebar = forwardRef<HTMLDivElement, Props>(function BranchSi
             onDelete={() => { onDelete(contextMenu.merged.repoIds, inst.name); setContextMenu(null); }}
             onPull={currentLocalRepoIds.length > 0 ? () => { onPull(currentLocalRepoIds, contextMenu.merged.baseName); setContextMenu(null); } : undefined}
             onPush={localRepoIds.length > 0 ? () => { onPush(localRepoIds, contextMenu.merged.baseName); setContextMenu(null); } : undefined}
+            onForcePush={forcePushRepoIds.length > 0 ? () => { onForcePush(forcePushRepoIds, contextMenu.merged.baseName); setContextMenu(null); } : undefined}
           />
         );
       })()}
@@ -501,9 +505,10 @@ function TagContextMenu({ mergedTag, x, y, canDelete, onClose, onCheckout, onMer
   );
 }
 
-function ContextMenu({ merged, x, y, canDelete, onClose, onCheckout, onMerge, onRebase, onDelete, onPull, onPush }: {
+function ContextMenu({ merged, x, y, initialAltKey, canDelete, onClose, onCheckout, onMerge, onRebase, onDelete, onPull, onPush, onForcePush }: {
   merged: MergedBranch;
   x: number; y: number;
+  initialAltKey: boolean;
   canDelete: boolean;
   onClose: () => void;
   onCheckout: () => void;
@@ -512,30 +517,44 @@ function ContextMenu({ merged, x, y, canDelete, onClose, onCheckout, onMerge, on
   onDelete: () => void;
   onPull?: () => void;
   onPush?: () => void;
+  onForcePush?: () => void;
 }) {
   const { ref, pos } = useClampedPosition(x, y);
+  const [altPressed, setAltPressed] = useState(initialAltKey);
   useEffect(() => {
     const onBlur = () => onClose();
     const onMouseDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      setAltPressed(e.altKey);
+    };
+    const onKeyUp = (e: KeyboardEvent) => setAltPressed(e.altKey);
     window.addEventListener('blur', onBlur);
     document.addEventListener('mousedown', onMouseDown, true);
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
     return () => {
       window.removeEventListener('blur', onBlur);
       document.removeEventListener('mousedown', onMouseDown, true);
       document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keyup', onKeyUp);
     };
   }, [onClose]);
+
+  const pushItem: MenuItem | null = onPush
+    ? altPressed && onForcePush
+      ? { icon: 'repo-force-push', label: `Force Push "${merged.baseName}"...`, action: onForcePush, danger: true }
+      : { icon: 'cloud-upload', label: `Push "${merged.baseName}"...`, action: onPush }
+    : null;
   const items: MenuItem[] = [
     { icon: 'arrow-right', label: `Checkout "${merged.baseName}"`, action: onCheckout },
     { sep: true },
     { icon: 'git-merge', label: 'Merge into current', action: onMerge },
     { icon: 'repo-forked', label: `Rebase onto "${merged.baseName}"`, action: onRebase },
-    ...(onPull || onPush ? [
+    ...(onPull || pushItem ? [
       { sep: true as const },
       ...(onPull ? [{ icon: 'cloud-download', label: `Pull "${merged.baseName}"`, action: onPull }] : []),
-      ...(onPush ? [{ icon: 'cloud-upload', label: `Push "${merged.baseName}"...`, action: onPush }] : []),
+      ...(pushItem ? [pushItem] : []),
     ] : []),
     ...(canDelete ? [{ sep: true as const }, { icon: 'trash', label: 'Delete branch', action: onDelete, danger: true }] : []),
   ];
