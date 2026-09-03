@@ -19,6 +19,7 @@ interface Props {
   onMerge: (repoId: string, from: string) => void;
   onRebase: (repoId: string, onto: string) => void;
   onDelete: (repoIds: string[], branchName: string) => void;
+  onDeleteRemote: (repoIds: string[], remoteName: string, branchName: string) => void;
   onFetchRepo: (repoId: string) => void;
   onPull: (repoIds: string[], branchName: string) => void;
   onPush: (repoIds: string[], branchName: string) => void;
@@ -32,7 +33,9 @@ interface Props {
 
 type SectionKey = string; // 'local' | 'remote:<name>' | 'tags'
 
-function stripRemotePrefix(name: string): string {
+function stripRemotePrefix(name: string, remoteName?: string): string {
+  const prefix = remoteName ? `${remoteName}/` : '';
+  if (prefix && name.startsWith(prefix)) return name.slice(prefix.length);
   return name.includes('/') ? name.slice(name.indexOf('/') + 1) : name;
 }
 
@@ -47,7 +50,7 @@ interface MergedBranch {
 function buildMergedBranches(branches: BranchInfo[]): MergedBranch[] {
   const map = new Map<string, MergedBranch>();
   for (const b of branches) {
-    const baseName = b.isRemote ? stripRemotePrefix(b.name) : b.name;
+    const baseName = b.isRemote ? stripRemotePrefix(b.name, b.remoteName) : b.name;
     const existing = map.get(baseName);
     if (existing) {
       existing.instances.push(b);
@@ -94,7 +97,7 @@ function buildMergedTags(tags: TagInfo[]): MergedTag[] {
 
 export const BranchSidebar = forwardRef<HTMLDivElement, Props>(function BranchSidebar({
   repos, branches, tags, filter, selectedBranchFilter, activeRepoId, onFilterChange, onBranchFilterSelect, onBranchFocus,
-  onCheckout, onMerge, onRebase, onDelete, onFetchRepo, onPull, onPush,
+  onCheckout, onMerge, onRebase, onDelete, onDeleteRemote, onFetchRepo, onPull, onPush,
   onCheckoutTag, onMergeTag, onPushTag, onDeleteTag, onCollapse, hidden,
 }, ref) {
   const [collapsed, setCollapsed] = useState<Set<SectionKey>>(new Set());
@@ -126,7 +129,7 @@ export const BranchSidebar = forwardRef<HTMLDivElement, Props>(function BranchSi
   const localMerged = sortMerged(buildMergedBranches(filtered.filter(b => !b.isRemote && b.name !== 'HEAD')));
 
   // Group remote branches by remote name (e.g. "origin", "upstream"), sorted alphabetically
-  const remoteBranches = filtered.filter(b => b.isRemote && stripRemotePrefix(b.name) !== 'HEAD');
+  const remoteBranches = filtered.filter(b => b.isRemote && stripRemotePrefix(b.name, b.remoteName) !== 'HEAD');
   const remoteGroupsMap = new Map<string, BranchInfo[]>();
   for (const b of remoteBranches) {
     const rName = b.remoteName ?? b.name.split('/')[0] ?? 'remote';
@@ -287,17 +290,22 @@ export const BranchSidebar = forwardRef<HTMLDivElement, Props>(function BranchSi
         const localInstances = contextMenu.merged.instances.filter(instance => !instance.isRemote);
         const currentLocalRepoIds = localInstances.filter(instance => instance.isHead).map(instance => instance.repoId);
         const localRepoIds = localInstances.map(instance => instance.repoId);
+        const remoteName = inst.isRemote ? (inst.remoteName ?? inst.name.split('/')[0]) : null;
         return (
           <ContextMenu
             merged={contextMenu.merged}
             x={contextMenu.x}
             y={contextMenu.y}
-            canDelete={!contextMenu.merged.isHead}
             onClose={() => setContextMenu(null)}
             onCheckout={() => { onCheckout(contextMenu.merged.repoIds, inst.name); setContextMenu(null); }}
             onMerge={() => { onMerge(inst.repoId, inst.name); setContextMenu(null); }}
             onRebase={() => { onRebase(inst.repoId, inst.name); setContextMenu(null); }}
-            onDelete={() => { onDelete(contextMenu.merged.repoIds, inst.name); setContextMenu(null); }}
+            onDelete={!inst.isRemote && !contextMenu.merged.isHead
+              ? () => { onDelete(contextMenu.merged.repoIds, inst.name); setContextMenu(null); }
+              : undefined}
+            onDeleteRemote={remoteName
+              ? () => { onDeleteRemote(contextMenu.merged.repoIds, remoteName, contextMenu.merged.baseName); setContextMenu(null); }
+              : undefined}
             onPull={currentLocalRepoIds.length > 0 ? () => { onPull(currentLocalRepoIds, contextMenu.merged.baseName); setContextMenu(null); } : undefined}
             onPush={localRepoIds.length > 0 ? () => { onPush(localRepoIds, contextMenu.merged.baseName); setContextMenu(null); } : undefined}
           />
@@ -501,15 +509,15 @@ function TagContextMenu({ mergedTag, x, y, canDelete, onClose, onCheckout, onMer
   );
 }
 
-function ContextMenu({ merged, x, y, canDelete, onClose, onCheckout, onMerge, onRebase, onDelete, onPull, onPush }: {
+function ContextMenu({ merged, x, y, onClose, onCheckout, onMerge, onRebase, onDelete, onDeleteRemote, onPull, onPush }: {
   merged: MergedBranch;
   x: number; y: number;
-  canDelete: boolean;
   onClose: () => void;
   onCheckout: () => void;
   onMerge: () => void;
   onRebase: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
+  onDeleteRemote?: () => void;
   onPull?: () => void;
   onPush?: () => void;
 }) {
@@ -537,7 +545,11 @@ function ContextMenu({ merged, x, y, canDelete, onClose, onCheckout, onMerge, on
       ...(onPull ? [{ icon: 'cloud-download', label: `Pull "${merged.baseName}"`, action: onPull }] : []),
       ...(onPush ? [{ icon: 'cloud-upload', label: `Push "${merged.baseName}"...`, action: onPush }] : []),
     ] : []),
-    ...(canDelete ? [{ sep: true as const }, { icon: 'trash', label: 'Delete branch', action: onDelete, danger: true }] : []),
+    ...(onDelete || onDeleteRemote ? [
+      { sep: true as const },
+      ...(onDelete ? [{ icon: 'trash', label: 'Delete branch', action: onDelete, danger: true }] : []),
+      ...(onDeleteRemote ? [{ icon: 'trash', label: 'Delete Remote Branch', action: onDeleteRemote, danger: true }] : []),
+    ] : []),
   ];
 
   return (

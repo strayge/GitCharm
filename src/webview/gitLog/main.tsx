@@ -482,6 +482,9 @@ function App() {
           onDelete={(repoIds, branchName) => {
             getVsCodeApi().postMessage({ type: 'LOG_DELETE_BRANCH_MULTI', requestId: generateId(), repoIds, branchName } satisfies LogToHostMsg);
           }}
+          onDeleteRemote={(repoIds, remoteName, branchName) => {
+            getVsCodeApi().postMessage({ type: 'LOG_DELETE_REMOTE_BRANCH_MULTI', requestId: generateId(), repoIds, remoteName, branchName } satisfies LogToHostMsg);
+          }}
           onFetchRepo={(repoId) => {
             const reqId = generateId();
             getVsCodeApi().postMessage({ type: 'LOG_FETCH_REPO', requestId: reqId, repoId } satisfies LogToHostMsg);

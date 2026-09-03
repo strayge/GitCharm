@@ -342,6 +342,7 @@ function LogApp() {
           onMerge={(repoId, from) => getVsCodeApi().postMessage({ type: 'LOG_MERGE', requestId: generateId(), repoId, from } satisfies LogToHostMsg)}
           onRebase={(repoId, onto) => getVsCodeApi().postMessage({ type: 'LOG_REBASE', requestId: generateId(), repoId, onto } satisfies LogToHostMsg)}
           onDelete={(repoIds, branchName) => getVsCodeApi().postMessage({ type: 'LOG_DELETE_BRANCH_MULTI', requestId: generateId(), repoIds, branchName } satisfies LogToHostMsg)}
+          onDeleteRemote={(repoIds, remoteName, branchName) => getVsCodeApi().postMessage({ type: 'LOG_DELETE_REMOTE_BRANCH_MULTI', requestId: generateId(), repoIds, remoteName, branchName } satisfies LogToHostMsg)}
           onFetchRepo={(repoId) => getVsCodeApi().postMessage({ type: 'LOG_FETCH_REPO', requestId: generateId(), repoId } satisfies LogToHostMsg)}
           onPull={(repoIds, branchName) => getVsCodeApi().postMessage({ type: 'LOG_PULL_BRANCH_PICK', repoIds, branchName } satisfies LogToHostMsg)}
           onPush={(repoIds, branchName) => getVsCodeApi().postMessage({ type: 'LOG_PUSH_BRANCH_PICK', repoIds, branchName } satisfies LogToHostMsg)}

@@ -454,13 +454,16 @@ export class GitService {
 
     // Fallback: simple-git
     const result = await this.git.branch(['-avv', '--sort=-committerdate']);
+    const configuredRemotes = (await this.getRemotes()).sort((a, b) => b.length - a.length);
     const branches: BranchInfo[] = [];
     for (const [name, branch] of Object.entries(result.branches)) {
       // Skip the detached HEAD pseudo-entry (e.g. "(HEAD detached at a9b68a1)")
       if (branch.current && name.startsWith('(HEAD detached')) continue;
       const isRemote = name.startsWith('remotes/');
       const cleanName = isRemote ? name.replace(/^remotes\//, '') : name;
-      const remoteName = isRemote ? cleanName.split('/')[0] : undefined;
+      const remoteName = isRemote
+        ? configuredRemotes.find(remote => cleanName.startsWith(`${remote}/`)) ?? cleanName.split('/')[0]
+        : undefined;
       let aheadBehind: { ahead: number; behind: number } | undefined;
       const full = branch.label?.match(/\[.+?: ahead (\d+), behind (\d+)\]/);
       const aheadOnly = branch.label?.match(/\[.+?: ahead (\d+)\]/);
@@ -1406,6 +1409,18 @@ export class GitService {
     const vsRepo = this.vsRepo();
     if (vsRepo) { await vsRepo.deleteBranch(branchName, force); return; }
     await this.git.deleteLocalBranch(branchName, force);
+  }
+
+  async deleteRemoteBranch(branchName: string, remote: string, expectedCommit: string): Promise<void> {
+    const remoteRef = `refs/heads/${branchName}`;
+    await this.git.raw([
+      'push',
+      `--force-with-lease=${remoteRef}:${expectedCommit}`,
+      '--delete',
+      '--end-of-options',
+      remote,
+      remoteRef,
+    ]);
   }
 
   async checkoutForce(branchName: string): Promise<void> {

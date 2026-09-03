@@ -1016,6 +1016,92 @@ export class GitLogPanelProvider implements vscode.WebviewViewProvider, vscode.D
         break;
       }
 
+      case 'LOG_DELETE_REMOTE_BRANCH_MULTI': {
+        const remoteBranch = `${msg.remoteName}/${msg.branchName}`;
+        const visibleRepoIds = new Set(this.getVisibleRepos().map(meta => meta.id));
+        const targets: Array<{ repoId: string; expectedCommit: string }> = [];
+        const errors: string[] = [];
+
+        for (const repoId of new Set(msg.repoIds)) {
+          const repo = visibleRepoIds.has(repoId) ? this.manager.getRepo(repoId) : undefined;
+          const meta = this.getNonWorktreeRepos().find(item => item.id === repoId);
+          if (!repo) {
+            errors.push(`${meta?.name ?? repoId}: repository is not available`);
+            continue;
+          }
+          try {
+            const branches = await repo.getBranches();
+            const matchingBranch = branches.find(branch =>
+              branch.isRemote
+              && branch.remoteName === msg.remoteName
+              && branch.name === remoteBranch
+            );
+            if (!matchingBranch) {
+              errors.push(`${meta?.name ?? repoId}: remote branch "${remoteBranch}" is not available`);
+              continue;
+            }
+            const expectedCommit = await repo.resolveRef(matchingBranch.fullName);
+            targets.push({ repoId, expectedCommit });
+          } catch (e: unknown) {
+            logError('deleteRemoteBranchMulti', formatGitError(e), getRawErrorDetail(e));
+            errors.push(`${meta?.name ?? repoId}: ${formatGitError(e)}`);
+          }
+        }
+
+        if (targets.length === 0) {
+          const error = errors.join('; ') || `Remote branch "${remoteBranch}" is not available.`;
+          vscode.window.showWarningMessage(error);
+          this.post({ type: 'LOG_BRANCH_OP_RESULT', requestId: msg.requestId, ok: false, error });
+          break;
+        }
+
+        const repoCount = targets.length;
+        const skippedMsg = errors.length > 0 ? ` (${errors.length} unavailable)` : '';
+        const confirm = await vscode.window.showWarningMessage(
+          `Delete remote branch "${remoteBranch}" in ${repoCount} ${repoCount === 1 ? 'repository' : 'repositories'}?${skippedMsg} This removes the branch from the remote repository, unless it changed since the last fetch.`,
+          { modal: true }, 'Delete Remote Branch'
+        );
+        if (!confirm) {
+          this.post({ type: 'LOG_BRANCH_OP_RESULT', requestId: msg.requestId, ok: false, error: 'Cancelled' });
+          return;
+        }
+
+        let deletedCount = 0;
+        for (const { repoId, expectedCommit } of targets) {
+          const repo = this.manager.getRepo(repoId);
+          const meta = this.getNonWorktreeRepos().find(item => item.id === repoId);
+          if (!repo) {
+            errors.push(`${meta?.name ?? repoId}: repository is no longer available`);
+            continue;
+          }
+          try {
+            await repo.deleteRemoteBranch(msg.branchName, msg.remoteName, expectedCommit);
+            deletedCount++;
+          } catch (e: unknown) {
+            logError('deleteRemoteBranchMulti', formatGitError(e), getRawErrorDetail(e));
+            errors.push(`${meta?.name ?? repoId}: ${formatGitError(e)}`);
+            continue;
+          }
+          try {
+            const branches = await repo.getBranches();
+            this.post({ type: 'LOG_REFS_UPDATE', repoId, branches });
+          } catch (e: unknown) {
+            logError('refreshAfterDeleteRemoteBranch', formatGitError(e), getRawErrorDetail(e));
+          }
+        }
+
+        if (deletedCount > 0) this.post({ type: 'LOG_REFRESH' });
+        if (errors.length > 0) {
+          void vscode.window.showWarningMessage(`${errors.length} error(s): ${errors.join('; ')}`, 'Show Log').then(choice => {
+            if (choice === 'Show Log') showLogChannel();
+          });
+          this.post({ type: 'LOG_BRANCH_OP_RESULT', requestId: msg.requestId, ok: false, error: errors.join('; ') });
+        } else {
+          this.post({ type: 'LOG_BRANCH_OP_RESULT', requestId: msg.requestId, ok: true });
+        }
+        break;
+      }
+
       case 'LOG_FETCH_ALL': {
         await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: 'Fetching all', cancellable: false },
