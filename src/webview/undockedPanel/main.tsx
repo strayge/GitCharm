@@ -110,6 +110,20 @@ function LogApp() {
         case 'LOG_REFRESH':
           reloadRef.current();
           break;
+        case 'LOG_BRANCH_RENAMED': {
+          const state = useLogStore.getState();
+          if (state.commitFilters.branch === msg.oldName) {
+            const selectedRepoId = state.commitFilters.repoId;
+            if (selectedRepoId && msg.repoIds.includes(selectedRepoId)) {
+              state.setCommitFilters({ branch: msg.newName });
+            } else if (!selectedRepoId) {
+              const allBranchReposRenamed = msg.branchRepoIds.length > 0
+                && msg.branchRepoIds.every(repoId => msg.repoIds.includes(repoId));
+              state.setCommitFilters({ branch: allBranchReposRenamed ? msg.newName : '' });
+            }
+          }
+          break;
+        }
         case 'LOG_STASHES_BATCH':
           store.setStashes(msg.stashCommits);
           break;
@@ -266,6 +280,15 @@ function LogApp() {
   }, [store.branches]);
 
   const selectedRepoColor = store.selectedCommit ? repoColors[store.selectedCommit.repoId] : undefined;
+  const activeRepoId = store.commitFilters.repoId;
+  const sidebarBranches = useMemo(
+    () => activeRepoId ? store.branches.filter(branch => branch.repoId === activeRepoId) : store.branches,
+    [store.branches, activeRepoId],
+  );
+  const sidebarTags = useMemo(
+    () => activeRepoId ? store.tags.filter(tag => tag.repoId === activeRepoId) : store.tags,
+    [store.tags, activeRepoId],
+  );
 
   const handleFilterChange = useCallback((key: keyof import('../gitLog/store/logStore').CommitFilters, value: string) => {
     store.setCommitFilters({ [key]: value });
@@ -326,8 +349,8 @@ function LogApp() {
         <BranchSidebar
           ref={sidebarRef}
           repos={store.repos.filter(r => !r.isWorktree)}
-          branches={store.branches}
-          tags={store.tags}
+          branches={sidebarBranches}
+          tags={sidebarTags}
           filter={store.branchFilter}
           selectedBranchFilter={store.commitFilters.branch}
           activeRepoId={store.commitFilters.repoId}
@@ -341,6 +364,12 @@ function LogApp() {
           onCheckout={(repoIds, branch) => repoIds.forEach(repoId => getVsCodeApi().postMessage({ type: 'LOG_CHECKOUT', requestId: generateId(), repoId, branchName: branch } satisfies LogToHostMsg))}
           onMerge={(repoId, from) => getVsCodeApi().postMessage({ type: 'LOG_MERGE', requestId: generateId(), repoId, from } satisfies LogToHostMsg)}
           onRebase={(repoId, onto) => getVsCodeApi().postMessage({ type: 'LOG_REBASE', requestId: generateId(), repoId, onto } satisfies LogToHostMsg)}
+          onRename={(repoIds, branchName) => {
+            const branchRepoIds = Array.from(new Set(store.branches
+              .filter(branch => !branch.isRemote && branch.name === branchName)
+              .map(branch => branch.repoId)));
+            getVsCodeApi().postMessage({ type: 'LOG_RENAME_BRANCH_MULTI', requestId: generateId(), repoIds, branchRepoIds, branchName } satisfies LogToHostMsg);
+          }}
           onDelete={(repoIds, branchName) => getVsCodeApi().postMessage({ type: 'LOG_DELETE_BRANCH_MULTI', requestId: generateId(), repoIds, branchName } satisfies LogToHostMsg)}
           onFetchRepo={(repoId) => getVsCodeApi().postMessage({ type: 'LOG_FETCH_REPO', requestId: generateId(), repoId } satisfies LogToHostMsg)}
           onPull={(repoIds, branchName) => getVsCodeApi().postMessage({ type: 'LOG_PULL_BRANCH_PICK', repoIds, branchName } satisfies LogToHostMsg)}

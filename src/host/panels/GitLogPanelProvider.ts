@@ -1016,6 +1016,87 @@ export class GitLogPanelProvider implements vscode.WebviewViewProvider, vscode.D
         break;
       }
 
+      case 'LOG_RENAME_BRANCH_MULTI': {
+        const targets = msg.repoIds.flatMap(repoId => {
+          const repo = this.manager.getRepo(repoId);
+          if (!repo) return [];
+          const meta = this.getNonWorktreeRepos().find(candidate => candidate.id === repoId);
+          return [{ repoId, repo, name: meta?.name ?? repoId }];
+        });
+        if (targets.length === 0) {
+          this.post({ type: 'LOG_BRANCH_OP_RESULT', requestId: msg.requestId, ok: false, error: 'Repo not found' });
+          return;
+        }
+
+        const scope = targets.length === 1 ? targets[0].name : `${targets.length} repositories`;
+        const input = await vscode.window.showInputBox({
+          title: `Rename branch '${msg.branchName}' in ${scope}`,
+          value: msg.branchName,
+          valueSelection: [0, msg.branchName.length],
+          validateInput: value => (value.trim() ? undefined : 'Branch name cannot be empty'),
+        });
+        if (input === undefined) return;
+
+        const newName = input.trim();
+        if (newName === msg.branchName) return;
+
+        const renamedRepoIds: string[] = [];
+        const renameErrors: string[] = [];
+        const refreshErrors: string[] = [];
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Renaming "${msg.branchName}" → "${newName}"…`, cancellable: false },
+          async () => {
+            for (const target of targets) {
+              try {
+                await target.repo.renameBranch(msg.branchName, newName);
+                renamedRepoIds.push(target.repoId);
+              } catch (e: unknown) {
+                const error = formatGitError(e);
+                logError(`rename-branch:${target.name}`, error, getRawErrorDetail(e));
+                renameErrors.push(`${target.name}: ${error}`);
+                continue;
+              }
+
+              try {
+                const branches = await target.repo.getBranches();
+                this.broadcast({ type: 'LOG_REFS_UPDATE', repoId: target.repoId, branches });
+              } catch (e: unknown) {
+                const error = formatGitError(e);
+                logError(`refresh-branches:${target.name}`, error, getRawErrorDetail(e));
+                refreshErrors.push(`${target.name}: renamed, but could not refresh branches: ${error}`);
+              }
+            }
+          },
+        );
+
+        const renamedBranch = renamedRepoIds.length > 0
+          ? { oldName: msg.branchName, newName, repoIds: renamedRepoIds, branchRepoIds: msg.branchRepoIds }
+          : undefined;
+        const issues = [...renameErrors, ...refreshErrors];
+        if (issues.length > 0) {
+          void vscode.window.showWarningMessage(`${issues.length} issue(s): ${issues.join('; ')}`, 'Show Log')
+            .then(choice => { if (choice === 'Show Log') showLogChannel(); });
+        }
+
+        if (renamedBranch) this.broadcast({ type: 'LOG_BRANCH_RENAMED', ...renamedBranch });
+
+        if (renameErrors.length > 0) {
+          this.post({
+            type: 'LOG_BRANCH_OP_RESULT',
+            requestId: msg.requestId,
+            ok: false,
+            error: renameErrors.join('; '),
+          });
+        } else {
+          const message = `Renamed "${msg.branchName}" → "${newName}" in ${targets.length} ${targets.length === 1 ? 'repository' : 'repositories'}.`;
+          if (refreshErrors.length === 0) vscode.window.showInformationMessage(message);
+          logInfo('rename-branch', message);
+          this.post({ type: 'LOG_BRANCH_OP_RESULT', requestId: msg.requestId, ok: true });
+        }
+        this.broadcast({ type: 'LOG_REFRESH' });
+        break;
+      }
+
       case 'LOG_FETCH_ALL': {
         await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: 'Fetching all', cancellable: false },

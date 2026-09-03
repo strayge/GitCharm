@@ -149,6 +149,20 @@ function App() {
             console.error('Branch operation failed:', msg.error);
           }
           break;
+        case 'LOG_BRANCH_RENAMED': {
+          const state = useLogStore.getState();
+          if (state.commitFilters.branch === msg.oldName) {
+            const selectedRepoId = state.commitFilters.repoId;
+            if (selectedRepoId && msg.repoIds.includes(selectedRepoId)) {
+              state.setCommitFilters({ branch: msg.newName });
+            } else if (!selectedRepoId) {
+              const allBranchReposRenamed = msg.branchRepoIds.length > 0
+                && msg.branchRepoIds.every(repoId => msg.repoIds.includes(repoId));
+              state.setCommitFilters({ branch: allBranchReposRenamed ? msg.newName : '' });
+            }
+          }
+          break;
+        }
         case 'LOG_SCROLL_TO_COMMIT':
           filterRepoRef.current(msg.repoId, null);
           store.setPendingScrollTarget({ hash: msg.hash, repoId: msg.repoId });
@@ -478,6 +492,12 @@ function App() {
           onRebase={(repoId, onto) => {
             const reqId = generateId();
             getVsCodeApi().postMessage({ type: 'LOG_REBASE', requestId: reqId, repoId, onto } satisfies LogToHostMsg);
+          }}
+          onRename={(repoIds, branchName) => {
+            const branchRepoIds = Array.from(new Set(store.branches
+              .filter(branch => !branch.isRemote && branch.name === branchName)
+              .map(branch => branch.repoId)));
+            getVsCodeApi().postMessage({ type: 'LOG_RENAME_BRANCH_MULTI', requestId: generateId(), repoIds, branchRepoIds, branchName } satisfies LogToHostMsg);
           }}
           onDelete={(repoIds, branchName) => {
             getVsCodeApi().postMessage({ type: 'LOG_DELETE_BRANCH_MULTI', requestId: generateId(), repoIds, branchName } satisfies LogToHostMsg);

@@ -215,6 +215,7 @@ export type HostToLogMsg =
   | { type: 'LOG_COMMIT_FILES'; requestId: string; files: Array<{ path: string; status: string; added?: number; removed?: number; oldPath?: string }>; error?: string }
   | { type: 'LOG_RANGE_FILES_RESULT'; requestId: string; files: Array<{ path: string; status: string; added?: number; removed?: number; oldPath?: string }>; orderedHashes: string[]; error?: string }
   | { type: 'LOG_BRANCH_OP_RESULT'; requestId: string; ok: boolean; output?: string; error?: string }
+  | { type: 'LOG_BRANCH_RENAMED'; oldName: string; newName: string; repoIds: string[]; branchRepoIds: string[] }
   | { type: 'LOG_REFS_UPDATE'; repoId: string; branches: BranchInfo[] }
   | { type: 'LOG_TAGS_UPDATE'; repoId: string; tags: TagInfo[] }
   | { type: 'LOG_COMMIT_TAGS_RESULT'; requestId: string; tags: string[] }
@@ -252,6 +253,7 @@ export type LogToHostMsg =
   | { type: 'LOG_COMPARE'; requestId: string; repoId: string; refA: string; refB: string }
   | { type: 'LOG_DELETE_BRANCH'; requestId: string; repoId: string; branchName: string; force: boolean }
   | { type: 'LOG_DELETE_BRANCH_MULTI'; requestId: string; repoIds: string[]; branchName: string }
+  | { type: 'LOG_RENAME_BRANCH_MULTI'; requestId: string; repoIds: string[]; branchRepoIds: string[]; branchName: string }
   | { type: 'LOG_FETCH_ALL' }
   | { type: 'LOG_FETCH_REPO'; requestId: string; repoId: string }
   | { type: 'LOG_GET_REMOTES'; requestId: string; repoId: string }
