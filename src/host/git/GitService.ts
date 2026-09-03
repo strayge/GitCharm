@@ -1413,6 +1413,15 @@ export class GitService {
 
   async deleteRemoteBranch(branchName: string, remote: string, expectedCommit: string): Promise<void> {
     const remoteRef = `refs/heads/${branchName}`;
+    const vsRepo = this.vsRepo();
+    if (vsRepo?.state.remotes.some(item => item.name === remote)) {
+      const trackingCommit = await this.resolveRef(`refs/remotes/${remote}/${branchName}`);
+      if (trackingCommit !== expectedCommit) {
+        throw new Error(`Remote branch "${remote}/${branchName}" changed since deletion was confirmed.`);
+      }
+      await vsRepo.push(remote, `:${remoteRef}`, false, ForcePushMode.ForceWithLease);
+      return;
+    }
     await this.git.raw([
       'push',
       `--force-with-lease=${remoteRef}:${expectedCommit}`,
